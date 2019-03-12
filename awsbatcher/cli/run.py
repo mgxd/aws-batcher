@@ -4,7 +4,7 @@ from argparse import ArgumentParser, Action
 
 from awsbatcher import DATALAD_ROOT, PROJECTS_DIR, __version__
 from awsbatcher.parser import fetch_datalad_data, fetch_s3_data
-from awsbatcher.batcher import AWSBatcher
+from awsbatcher.batcher import AWSBatcher, SLURMBatcher
 
 class Str2DictAction(Action):
     def __call__(self, parser, namespace, values, option_string=None):
@@ -20,14 +20,19 @@ def get_parser():
                         help="Datalad project name or path to S3 bucket. "
                         "Supported projects include {}, and openneuro:<project>"
                         .format(", ".join(PROJECTS_DIR.keys())))
-    parser.add_argument('job_queue', help="AWS Batch job queue")
-    parser.add_argument('job_def', help="AWS Batch job definition")
+    parser.add_argument('batcher', choices=('aws', 'slurm'),
+                        help="Batching system to submit to - supported include"
+                             "`aws` and `slurm`")
+    aws = parser.add_argument_group('aws')
+    aws.add_argument('--aws-queue', help="AWS Batch job queue")
+    aws.add_argument('--aws-def', help="AWS Batch job definition")
+    slurm = parser.add_argument_group('slurm')
+    slurm.add_argument('--bscript', help="SLURM batch script")
     # Optional job definition overwrites
     jobdef = parser.add_argument_group('job-definitions')
     jobdef.add_argument('--vcpus', type=int, help='Number of vCPUs')
     jobdef.add_argument('--mem-mb', type=int, help='Requested memory (MB)')
-    jobdef.add_argument('--envars',
-                        action=Str2DictAction,
+    jobdef.add_argument('--envars', action=Str2DictAction,
                         help="One or more environmental variables defined as "
                              "KEY=VALUE and comma-separated")
     jobdef.add_argument('--timeout', type=int, help='Time until timeout (sec)')
@@ -66,15 +71,22 @@ def main(argv=None):
             is_s3 = True
             project_url = secondarydir
 
-    batcher = AWSBatcher(desc=args.desc,
-                         dataset=args.project,
-                         jobq=args.job_queue,
-                         jobdef=args.job_def,
-                         vcpus=args.vcpus,
-                         mem_mb=args.mem_mb,
-                         envars=args.envars,
-                         timeout=args.timeout,
-                         maxjobs=args.maxjobs)
+    # define our Batcher
+    if args.batcher == 'aws':
+        batcher = AWSBatcher(dataset=args.project,
+                             jobq=args.aws_queue,
+                             jobdef=args.aws_def,
+                             desc=args.desc,
+                             vcpus=args.vcpus,
+                             mem_mb=args.mem_mb,
+                             envars=args.envars,
+                             timeout=args.timeout,
+                             maxjobs=args.maxjobs)
+    elif args.batcher == 'slurm':
+        batcher = SLURMBatcher(dataset=args.project,
+                               bscript=args.bscript,
+                               desc=args.desc)
+
     # crawl and aggregate subjects to run
     if is_s3:
         batcher = fetch_s3_data(project_url, batcher)
